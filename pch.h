@@ -3,7 +3,7 @@
 
 #define GLM_ENABLE_EXPERIMENTAL
 
-#include "framework.h"
+#include "config.hpp"
 #include <stdio.h>
 #include "MinHook.h"
 
@@ -12,42 +12,42 @@ typedef unsigned long long uint64_t;
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "ntdll.lib")
-
-#include <algorithm>
-#include <vector>
-#include <unordered_map>
-#include <fstream>
 #include <d3d11.h>
 #include <dxgi.h>
-#include "imgui.h"
-#include "imgui_impl_win32.h"
-#include "imgui_impl_dx11.h"
-#include <string>
-#include <emmintrin.h> // SSE2 intrinsics (__m128d, __m128i, _mm_cvtpd_ps, _mm_cvtsi128_si32)
-#include <cmath>       // roundf, tanf, fmaxf
-#include <cstdint>     // fixed width types
+
+struct XMFLOAT3X4 {
+	float _11, _12, _13, _14;
+	float _21, _22, _23, _24;
+	float _31, _32, _33, _34;
+};
 
 #include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
 #include <algorithm>
-
+#include <vector>
+#include <unordered_map>
+#include <fstream>
+#include <string>
+#include <emmintrin.h>
+#include <cmath>
+#include <cstdint>
 #include <winternl.h>
+#include <chrono>
+#include <thread>
 
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam );
-static FILE *f;
-static uint64_t base;
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imgui.h"
+#include "imgui_impl_win32.h"
+#include "imgui_impl_dx11.h"
+#include "imgui_internal.h"
 
-typedef void *( *tIObjectInitalizer )( __int64 IObject, __int64 a2, int  a3 );
-static tIObjectInitalizer oIObjectInitalizer = nullptr;
-static uint64_t aIObjectInitalizer;
+inline std::vector<uint64_t> g_IEntity = {};
 
-typedef void *( *tIObjectDeconstructor )( __int64 *Block );
-static tIObjectDeconstructor oIObjectDeconstructor = nullptr;
-static uint64_t aIObjectDeconstructor;
-
-static std::vector<uint64_t> g_IEntity = {};
+#include "hooks.h"
+#include "sdk.hpp"
 #endif //PCH_H

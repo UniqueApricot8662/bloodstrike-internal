@@ -1,217 +1,6 @@
 #include "pch.h"
-
-static bool bStickyAim = true;
-static float sens = 0.45f;
-static signed int clamp_min = -150;
-static signed int clamp_max = 150;
-static float fov = 200.f;
-
-bool can_read( void *addr, size_t size )
-{
-    MEMORY_BASIC_INFORMATION mbi;
-    if ( VirtualQuery( addr, &mbi, sizeof( mbi ) ) == 0 )
-        return false;
-
-    if ( !( mbi.Protect & ( PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE ) ) )
-        return false;
-
-    if ( mbi.State != MEM_COMMIT )
-        return false;
-
-    return ( (char *)addr + size ) <= ( (char *)mbi.BaseAddress + mbi.RegionSize );
-}
-
-bool _can_read( void *addr, size_t size )
-{
-    return (uint64_t)addr > base && (uint64_t) addr < base + 0xffffffff;
-}
-
-template <typename T>
-bool safe_read( uint64_t addr, T &val )
-{
-    if ( !_can_read( (void *)addr, sizeof( T ) ) ) return false;
-    val = *(T *)addr;
-    return true;
-}
-
-template <typename T>
-bool safe_read_slow ( uint64_t addr, T &val )
-{
-    if ( !can_read( (void *)addr, sizeof( T ) ) ) return false;
-    val = *(T *)addr;
-    return true;
-}
-
-typedef struct {
-    char button;
-    char x;
-    char y;
-    char wheel;
-    char unk1;
-} _MOUSE;
-
-
-namespace bloodstrike
-{
-    namespace renderer
-    {
-        constexpr uint64_t hwnd = 0x6DE9430; // updated 9.26
-
-        static ID3D11Device *deviceInstance = nullptr;
-        ID3D11DeviceContext *contextInstance = nullptr;
-        static ID3D11RenderTargetView *rtv = nullptr;
-        static HWND hWindow;
-        static bool hooked = false;
-
-        static uint64_t camera = 0x0;
-        static std::vector<uint64_t> all_cameras = {};
-
-    }
-
-    namespace funcs
-    {
-        constexpr uint64_t Messiah__IObject__Initalizer = 0x2CF160;       // updated 9.26
-        constexpr uint64_t Messiah__IObject__Deconstructor = 0x2CF890;    // updated 9.26
-        constexpr uint64_t Messiah_WorldToScreen = 0x940F60;              // updated 9.26
-        constexpr uint64_t GetRawInputData = 0x3BE8FF8;
-    }
-
-    namespace vftables
-    {
-        const uint64_t Messiah__IEntity = 0x3D80048;                // updated 9.26
-        const uint64_t Messiah__ICamera = 0x3F9B1D0;                // updated 9.26
-        const uint64_t Messiah__AnimationCore__Pose = 0x3FA2F18;    // updated 9.26
-        const uint64_t Messiah__SkeletonComponent = 0x4103698;      // updated 9.26
-        const uint64_t Messiah__Actor = 0x5001C20;                  // updated 9.26
-        const uint64_t Messiah__ActorComponent = 0x4138AB0;         // updated 9.28
-        const uint64_t Messiah__IArea = 0x3FBAA68;
-        const uint64_t Messiah__TachComponent = 0x4101FC8;
-        const uint64_t Messiah__FontType = 0x3C189F0;
-    }
-}
-
-void *hkIObjectInitalizer( __int64 IObject, __int64 a2, int a3 )
-{
-    if ( IObject && std::find( g_IEntity.begin( ), g_IEntity.end( ), IObject ) == g_IEntity.end( ) && can_read((void *)IObject, sizeof(void *)) )
-    {
-        g_IEntity.push_back( IObject );
-    }
-
-    return oIObjectInitalizer( IObject, a2, a3 );
-}
-
-void *hkIObjectDeconstructor( __int64 *Block )
-{
-    if ( Block )
-    {
-        if ( *Block == bloodstrike::renderer::camera ) bloodstrike::renderer::camera = 0x0;
-        if ( std::find( bloodstrike::renderer::all_cameras.begin( ), bloodstrike::renderer::all_cameras.end( ), *Block ) == bloodstrike::renderer::all_cameras.end( ) )
-        {
-            bloodstrike::renderer::all_cameras.erase( std::remove( bloodstrike::renderer::all_cameras.begin( ), bloodstrike::renderer::all_cameras.end( ), *Block ), bloodstrike::renderer::all_cameras.end( ) );
-        }
-
-        g_IEntity.erase( std::remove( g_IEntity.begin( ), g_IEntity.end( ), *Block ), g_IEntity.end( ) );
-    }
-
-    return oIObjectDeconstructor( Block );
-}
-
-typedef HRESULT( *tPresent )( IDXGISwapChain *pSwapChain, UINT, UINT );
-static tPresent oPresent = nullptr;
-static uint64_t aPresent;
-
-typedef double *( *tProject )( __int64 thisptr, double * out, __int64 worldpos );
-static tProject oProject = nullptr;
-static uint64_t aProject;
-
-typedef void ( *tSetBonePos ) ( __int64 SkeletonComponent, void *NewBonePos );
-static tSetBonePos oSetBonePos = nullptr;
-static uint64_t aSetBonePos;
-
-typedef UINT ( *tGetRawInputData ) ( HRAWINPUT, UINT, LPVOID, PUINT, UINT );
-tGetRawInputData oGetRawInputData;
-static uint64_t aGetRawInputData;
-
-typedef HRESULT( *tResizeBuffers )( IDXGISwapChain *swap, UINT bufferCount, UINT width, UINT height, DXGI_FORMAT newFormat, UINT flags );
-static tResizeBuffers oResizeBuffers;
-static uint64_t aResizeBuffers;
-
-static bool should_change_mouse;
-static char dx;
-static char dy;
-
-UINT WINAPI hkGetRawInputData( HRAWINPUT hRaw, UINT uiCmd, LPVOID pData, PUINT pcbSize, UINT cbHeader ) {
-    UINT ret = oGetRawInputData( hRaw, uiCmd, pData, pcbSize, cbHeader );
-    if ( !should_change_mouse ) return ret;
-
-    if ( pData ) {
-        RAWINPUT *ri = (RAWINPUT *)pData;
-        if ( ri->header.dwType == RIM_TYPEMOUSE ) {
-            ri->data.mouse.lLastX = dx;
-            ri->data.mouse.lLastY = dy;
-        }
-    }
-    return ret;
-}
-
-bool w2s( __int64 cam, const glm::vec3 &world, glm::vec2 &out )
-{
-    float relX = world.x - *(float *)( cam + 124 );
-    float relY = world.y - *(float *)( cam + 128 );
-    float relZ = world.z - *(float *)( cam + 132 );
-
-    float px = relX * *(float *)( cam + 772 )
-        + relY * *(float *)( cam + 784 )
-        + relZ * *(float *)( cam + 796 );
-
-    float py = relX * *(float *)( cam + 776 )
-        + relY * *(float *)( cam + 788 )
-        + relZ * *(float *)( cam + 800 );
-
-    float pzOrig = relX * *(float *)( cam + 780 )
-        + relY * *(float *)( cam + 792 )
-        + relZ * *(float *)( cam + 804 );
-
-    if ( pzOrig >= -0.01f ) // behind camera, original w2s doesn't have this for some reason
-        return false;
-
-    float pz = -pzOrig;
-
-    float fov = *(float *)( cam + 824 );
-    float f = 1.0f / tanf( ( fov * 0.017453292f ) * 0.5f );
-
-    float screenW = (float)*(uint16_t *)( cam + 752 );
-    float screenH = (float)*(uint16_t *)( cam + 754 );
-
-    float invZ = 1.0f / fmaxf( fabsf( pz ), 0.000001f );
-
-    out.x = roundf( ( ( px * invZ ) * f * screenH + screenW ) * 0.5f * 10.0f ) * 0.1f;
-    out.y = roundf( ( ( screenH - ( ( py * invZ ) * f * screenH ) ) * 0.5f ) * 10.0f ) * 0.1f;
-
-    return true;
-}
-
-HRESULT hkResizeBuffers( IDXGISwapChain *swap, UINT bufferCount, UINT width, UINT height, DXGI_FORMAT newFormat, UINT flags )
-{
-    if ( bloodstrike::renderer::rtv ) {
-        bloodstrike::renderer::rtv->Release( );
-        bloodstrike::renderer::rtv = nullptr;
-    }
-
-    HRESULT hr = oResizeBuffers( swap, bufferCount, width, height, newFormat, flags );
-    if ( FAILED( hr ) ) return hr;
-
-    ID3D11Texture2D *backBuffer = nullptr;
-    swap->GetBuffer( 0, __uuidof( ID3D11Texture2D ), (void **)&backBuffer );
-    if ( backBuffer ) {
-        bloodstrike::renderer::deviceInstance->CreateRenderTargetView( backBuffer, nullptr, &bloodstrike::renderer::rtv );
-        backBuffer->Release( );
-    }
-
-    return hr;
-}
-
-static int bone_offset = 158;
+using namespace sdk;
+using namespace hooks;
 
 HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
 {
@@ -233,10 +22,74 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
         IMGUI_CHECKVERSION( );
         ImGui::CreateContext( );
         ImGuiIO &io = ImGui::GetIO( ); (void)io;
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
 
         ImGui::StyleColorsDark( );
+
+        ImGuiStyle &style = ImGui::GetStyle( );
+        ImVec4 *colors = style.Colors;
+
+        // base colors remain, swap blues for pinks
+        colors[ImGuiCol_Text] = ImVec4( 1.00f, 0.98f, 0.98f, 1.00f );
+        colors[ImGuiCol_TextDisabled] = ImVec4( 0.50f, 0.45f, 0.50f, 1.00f );
+
+        // window bg
+        colors[ImGuiCol_WindowBg] = ImVec4( 0.13f, 0.12f, 0.14f, 1.00f );
+        colors[ImGuiCol_ChildBg] = ImVec4( 0.16f, 0.14f, 0.18f, 1.00f );
+        colors[ImGuiCol_PopupBg] = ImVec4( 0.18f, 0.16f, 0.20f, 1.00f );
+
+        // borders
+        colors[ImGuiCol_Border] = ImVec4( 0.50f, 0.35f, 0.45f, 0.50f ); // accent
+        colors[ImGuiCol_BorderShadow] = ImVec4( 0.10f, 0.08f, 0.12f, 0.50f );
+
+        // frames
+        colors[ImGuiCol_FrameBg] = ImVec4( 0.20f, 0.15f, 0.22f, 1.00f );
+        colors[ImGuiCol_FrameBgHovered] = ImVec4( 0.85f, 0.45f, 0.70f, 0.40f ); // pink hover
+        colors[ImGuiCol_FrameBgActive] = ImVec4( 0.95f, 0.35f, 0.65f, 0.70f ); // stronger accent
+
+        // title bars
+        colors[ImGuiCol_TitleBg] = ImVec4( 0.18f, 0.12f, 0.20f, 1.00f );
+        colors[ImGuiCol_TitleBgActive] = ImVec4( 0.90f, 0.40f, 0.70f, 1.00f ); // pink active
+        colors[ImGuiCol_TitleBgCollapsed] = ImVec4( 0.15f, 0.10f, 0.18f, 0.90f );
+
+        // scrollbars
+        colors[ImGuiCol_ScrollbarBg] = ImVec4( 0.12f, 0.10f, 0.14f, 1.00f );
+        colors[ImGuiCol_ScrollbarGrab] = ImVec4( 0.85f, 0.40f, 0.70f, 0.60f );
+        colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4( 0.95f, 0.35f, 0.65f, 0.80f );
+        colors[ImGuiCol_ScrollbarGrabActive] = ImVec4( 0.95f, 0.25f, 0.60f, 1.00f );
+
+        // checkmarks / sliders
+        colors[ImGuiCol_CheckMark] = ImVec4( 0.95f, 0.35f, 0.65f, 1.00f );
+        colors[ImGuiCol_SliderGrab] = ImVec4( 0.85f, 0.45f, 0.70f, 0.70f );
+        colors[ImGuiCol_SliderGrabActive] = ImVec4( 0.95f, 0.35f, 0.65f, 1.00f );
+
+        // buttons
+        colors[ImGuiCol_Button] = ImVec4( 0.75f, 0.30f, 0.65f, 0.60f );
+        colors[ImGuiCol_ButtonHovered] = ImVec4( 0.95f, 0.35f, 0.65f, 0.85f );
+        colors[ImGuiCol_ButtonActive] = ImVec4( 1.00f, 0.25f, 0.60f, 1.00f );
+
+        // tabs
+        colors[ImGuiCol_Tab] = ImVec4( 0.18f, 0.14f, 0.20f, 0.86f );
+        colors[ImGuiCol_TabHovered] = ImVec4( 0.90f, 0.35f, 0.70f, 0.80f );
+        colors[ImGuiCol_TabActive] = ImVec4( 0.95f, 0.30f, 0.65f, 1.00f );
+        colors[ImGuiCol_TabUnfocused] = ImVec4( 0.15f, 0.10f, 0.18f, 0.90f );
+        colors[ImGuiCol_TabUnfocusedActive] = ImVec4( 0.85f, 0.25f, 0.60f, 0.80f );
+
+        // title accents
+        colors[ImGuiCol_Header] = ImVec4( 0.85f, 0.40f, 0.70f, 0.45f );
+        colors[ImGuiCol_HeaderHovered] = ImVec4( 0.95f, 0.35f, 0.65f, 0.70f );
+        colors[ImGuiCol_HeaderActive] = ImVec4( 1.00f, 0.25f, 0.60f, 1.00f );
+
+        // separators
+        colors[ImGuiCol_Separator] = ImVec4( 0.50f, 0.35f, 0.45f, 0.50f );
+        colors[ImGuiCol_SeparatorHovered] = ImVec4( 0.95f, 0.35f, 0.65f, 0.70f );
+        colors[ImGuiCol_SeparatorActive] = ImVec4( 1.00f, 0.25f, 0.60f, 1.00f );
+
+        // resize grips
+        colors[ImGuiCol_ResizeGrip] = ImVec4( 0.85f, 0.35f, 0.65f, 0.20f );
+        colors[ImGuiCol_ResizeGripHovered] = ImVec4( 0.95f, 0.35f, 0.65f, 0.70f );
+        colors[ImGuiCol_ResizeGripActive] = ImVec4( 1.00f, 0.25f, 0.60f, 1.00f );
 
         bloodstrike::renderer::hWindow = *(HWND *)( base + bloodstrike::renderer::hwnd );
 
@@ -246,6 +99,22 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
         bloodstrike::renderer::hooked = true;
         return oPresent( pSwapChain, SyncInterval, Flags );
     }
+
+
+    ImGuiStyle &style = ImGui::GetStyle( );
+    ImVec4 *colors = style.Colors;
+
+    auto &c = colors[ImGuiCol_TitleBg];
+
+    ImVec4 target = colorBack
+        ? ImVec4( 0.90f, 0.40f, 0.70f, 1.00f )
+        : ImVec4( 0.18f, 0.12f, 0.20f, 1.00f );
+
+    c = ImLerp( c, target, anim_speed );
+
+    if ( fabsf( c.x - target.x ) < 0.001f )
+        colorBack = !colorBack;
+
 
     DXGI_SWAP_CHAIN_DESC desc;
     pSwapChain->GetDesc( &desc );
@@ -275,7 +144,11 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
             glm::vec3 local_pos = local_trans[3];
             for ( auto addr : g_IEntity )
             {
-                if ( !addr ) continue;
+                if ( !addr )
+                {
+                    g_IEntity.erase( std::remove( g_IEntity.begin( ), g_IEntity.end( ), addr ), g_IEntity.end( ) );
+                    continue;
+                }
 
                 uint64_t vtable = *(uint64_t *)( addr );
 
@@ -288,99 +161,74 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
                         continue;
                     }
 
-                    uint64_t isLocalEntity = *(uint64_t *)( addr + 0xF8 );
-                    if ( isLocalEntity )
-                    {
-                        continue;
-                    }
 
                     uint64_t SkelCache = 0;
                     uint64_t BoneData = 0;
 
+                    if ( !can_read( (void *)( addr + 0x58 ) ) )
+                    {
+                        g_IEntity.erase( std::remove( g_IEntity.begin( ), g_IEntity.end( ), addr ), g_IEntity.end( ) );
+                        continue;
+                    }
 
                     glm::mat4x3 trans = *(glm::mat4x3 *)( addr + 0x58 );
+                    XMFLOAT3X4 dxTrans = *(XMFLOAT3X4 *)( addr + 0x58 );
+
                     glm::vec3 coords = trans[3];
 
                     float d = ( glm::distance( local_pos, coords ) );
                     float d2 = (int)d;
-                    if ( d < 1.f ) continue;
 
-                    if ( coords.x - (float)(int)coords.x > 0.000 ) continue;
+                    if ( fabsf( d - 1.506006f ) < 1e-6f ) continue;
+
 
                     uint64_t CachedObjects = *(uint64_t *)( addr + 0x40 );
                     if ( !CachedObjects )
                     {
+                        g_IEntity.erase( std::remove( g_IEntity.begin( ), g_IEntity.end( ), addr ), g_IEntity.end( ) );
                         continue;
                     }
 
                     uint64_t ActorComponent = *(uint64_t *)( CachedObjects + 0x10 );
                     if ( !ActorComponent )
                     {
+                        g_IEntity.erase( std::remove( g_IEntity.begin( ), g_IEntity.end( ), addr ), g_IEntity.end( ) );
                         continue;
                     }
-
-                    uint64_t Area = *(uint64_t *)( addr + 0x88 );
-                    if ( !Area ) continue;
-                    void **ac_vtable = *(void ***)( Area );
-                    if ( (uint64_t)ac_vtable != base + bloodstrike::vftables::Messiah__IArea )
-                    {
-                        continue;
-                    }
-
 
                     if ( !can_read( (void *)ActorComponent, sizeof( void * ) ) ) continue;
+                    uint64_t ac_vt = *(uint64_t *)( ActorComponent );
 
-                    ac_vtable = *(void ***)( ActorComponent );
-                    if ( (uint64_t)ac_vtable != base + bloodstrike::vftables::Messiah__ActorComponent )
+                    if ( ac_vt != base + bloodstrike::vftables::Messiah__ActorComponent )
                     {
+                        g_IEntity.erase( std::remove( g_IEntity.begin( ), g_IEntity.end( ), addr ), g_IEntity.end( ) );
+
                         continue;
                     }
-
 
                     uint64_t Actor = *(uint64_t *)( ActorComponent + 0xD0 );
                     if ( !Actor )
                     {
+                        g_IEntity.erase( std::remove( g_IEntity.begin( ), g_IEntity.end( ), addr ), g_IEntity.end( ) );
                         continue;
                     }
-                    ac_vtable = *(void ***)( Actor );
-                    if ( (uint64_t)ac_vtable != base + bloodstrike::vftables::Messiah__Actor )
-                    {
-                        continue;
-                    }
+
+                    uint32_t PlayerType = *(uint32_t *)( Actor + 0x8 );
+                    if ( PlayerType != 3 ) continue;
 
                     uint64_t Pose = *(uint64_t *)( Actor + 0x18 );
                     if ( !Pose )
                     {
-                        continue;
-                    }
-                    ac_vtable = *(void ***)( Pose );
-                    if ( (uint64_t)ac_vtable != base + bloodstrike::vftables::Messiah__AnimationCore__Pose )
-                    {
+                        g_IEntity.erase( std::remove( g_IEntity.begin( ), g_IEntity.end( ), addr ), g_IEntity.end( ) );
                         continue;
                     }
 
-                    SkelCache = *(uint64_t *)( Pose + 0x10 );
-                    if ( !SkelCache )
-                    {
-                        continue;
-                    }
+                    if ( !can_read( (void *)Pose ) ) continue;
 
-                    
+                    uint64_t BipedPose = *(uint64_t *)( Pose + 0x90 ); // sizeof = 0x118
+                    if ( !BipedPose ) continue;
 
-                    // bone data starts at 0x88
-                    // each bone is 0x98 in length
-
-
-                    SkelCache += 0x88; // junk data before the array starts
-                    if ( !can_read( (void *)( *(uint64_t *)SkelCache ), sizeof( void * ) ) ) continue;
-
-                    uint64_t font_check = *(uint64_t *)( CachedObjects + 0x20 );
-                    if ( can_read( (void *)font_check, sizeof( void * ) ) )
-                    {
-                        uint64_t fc_vtable = *(uint64_t *)( font_check );
-                        if ( fc_vtable == base + bloodstrike::vftables::Messiah__FontType ) continue;
-                    }
-
+                    BipedPose += 0x8; // first bone ptr is garbage
 
                     glm::vec2 result;
                     if ( w2s( bloodstrike::renderer::camera, coords, result ) )
@@ -392,40 +240,181 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
 
                         if ( dst_m < 1000 )
                         {
-                            std::string txt = std::format( "[enemy {:d}m]", dst_m );
-                            float text_size_x = ImGui::CalcTextSize( txt.c_str( ) ).x; text_size_x /= 2.f;
 
                             bool visible = *(bool *)( addr + 0x128 );
                             ImColor color = visible ? ImColor( 100, 25, 25, 255 ) : ImColor( 175, 175, 175, 255 );
 
-                            ImGui::GetForegroundDrawList( )->AddText( ImVec2( pos.x-text_size_x, pos.y ), color, txt.c_str( ) );
-
-                            glm::vec3 head_pos = coords + glm::vec3( 0.0f, bone_offset / 100.f, 0.0f );
-
-                            glm::vec2 hp;
-                            if ( w2s( bloodstrike::renderer::camera, head_pos, hp ) )
                             {
-                                ImGui::GetForegroundDrawList( )->AddLine( ImVec2( ds.x, 0 ), ImVec2( hp.x, hp.y ), color );
+                                glm::vec2 neck, spine1, spine2, spine3, pelvis, buttCheekL, buttCheekR, kneeL, kneeR, footL, footR, sholL, elbowL, wristL, sholR, elbowR, wristR; //  no head in bipedPose too lazy to find it in the other array
+                                glm::vec3 _neck, _spine1, _spine2, _spine3, _pelvis, _buttCheekL, _buttCheekR, _kneeL, _kneeR, _footL, _footR, _sholL, _elbowL, _wristL, _sholR, _elbowR, _wristR;
 
-                                float dst = glm::distance( hp, sc );
-                                if ( dst < closest_dst )
+                                // thanks tantem for matrix offset from bonestart
+                                uint64_t boneStart = *(uint64_t *)( ( 7 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _neck );
+                                    w2s( bloodstrike::renderer::camera, _neck, neck );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 6 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _spine1 );
+                                    w2s( bloodstrike::renderer::camera, _spine1, spine1 );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 5 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _spine2 );
+                                    w2s( bloodstrike::renderer::camera, _spine2, spine2 );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 4 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _spine3 );
+                                    w2s( bloodstrike::renderer::camera, _spine3, spine3 );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 3 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _pelvis );
+                                    w2s( bloodstrike::renderer::camera, _pelvis, pelvis );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 22 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _buttCheekL );
+                                    w2s( bloodstrike::renderer::camera, _buttCheekL, buttCheekL );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 19 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _buttCheekR );
+                                    w2s( bloodstrike::renderer::camera, _buttCheekR, buttCheekR );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 23 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _kneeL );
+                                    w2s( bloodstrike::renderer::camera, _kneeL, kneeL );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 19 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _kneeR );
+                                    w2s( bloodstrike::renderer::camera, _kneeR, kneeR );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 24 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _footL );
+                                    w2s( bloodstrike::renderer::camera, _footL, footL );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 20 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _footR );
+                                    w2s( bloodstrike::renderer::camera, _footR, footR );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 14 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _sholL );
+                                    w2s( bloodstrike::renderer::camera, _sholL, sholL );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 9 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _sholR );
+                                    w2s( bloodstrike::renderer::camera, _sholR, sholR );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 15 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _elbowL );
+                                    w2s( bloodstrike::renderer::camera, _elbowL, elbowL );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 10 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _elbowR );
+                                    w2s( bloodstrike::renderer::camera, _elbowR, elbowR );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 16 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _wristL );
+                                    w2s( bloodstrike::renderer::camera, _wristL, wristL );
+                                }
+
+                                boneStart = *(uint64_t *)( ( 11 * 0x8 ) + BipedPose );
+                                if ( boneStart ) {
+                                    MessiahMatrixAdd( *(XMFLOAT3X4 *)( boneStart + 0x30 ), dxTrans, _wristR );
+                                    w2s( bloodstrike::renderer::camera, _wristR, wristR );
+                                }
+
+                                BoneConnection( neck, spine1, color );
+                                BoneConnection( spine1, spine2, color );
+                                BoneConnection( spine2, spine3, color );
+                                BoneConnection( spine3, pelvis, color );
+
+                                BoneConnection( spine1, sholL, color );
+                                BoneConnection( sholL, elbowL, color );
+                                BoneConnection( elbowL, wristL, color );
+
+                                BoneConnection( spine1, sholR, color );
+                                BoneConnection( sholR, elbowR, color );
+                                BoneConnection( elbowR, wristR, color );
+
+                                BoneConnection( pelvis, buttCheekL, color );
+                                BoneConnection( buttCheekL, kneeL, color );
+                                BoneConnection( kneeL, footL, color );
+
+                                BoneConnection( pelvis, buttCheekR, color );
+                                BoneConnection( buttCheekR, kneeR, color );
+                                BoneConnection( kneeR, footR, color );
+
+                                std::string address_txt = std::format( "[{:x}]", addr );
+                                std::string dist_txt = std::format( "{:d}m", dst_m );
+
+                                float dist = glm::distance( sc, neck );
+                                if ( dist < closest_dst )
                                 {
-                                    if ( !bStickyAim )
+                                    closest_dst = dist;
+                                    if ( randomizeAim )
                                     {
-                                        closest_dst = dst;
-                                        target_pos = hp;
+										float r = static_cast <float> ( rand( ) ) / static_cast <float> ( RAND_MAX );
+                                        if ( r < headChance )
+                                        {
+                                            target_pos = neck;
+                                        }
+                                        else
+                                        {
+                                            target_pos = spine3;
+                                        }
                                     }
                                     else
                                     {
-                                        if ( !should_change_mouse || closest_dst == FLT_MAX )
-                                        {
-                                            closest_dst = dst;
-                                            target_pos = hp;
-                                        }
+                                        target_pos = aimBody ? spine3 : neck;
                                     }
                                 }
-                            }
 
+                                float height = abs( neck.y - result.y );
+                                float width = height * 0.4;
+
+                                visuals::DrawCornerBox(
+                                    neck.x - width,
+                                    neck.y,
+                                    width * 1.8f,
+                                    height,
+                                    1,
+                                    visuals::ColorToArray( ImColor( 255, 255, 255, 255 ) )
+                                );
+
+                                float z = height * 0.25;
+                                z = std::clamp( z, 15.f, 40.f );
+
+                                visuals::DrawLabel( dist_txt, glm::vec2( neck.x, neck.y - ( z ) ), visuals::ColorToArray( ImColor( 255, 255, 255, 255 ) ), true );
+                                visuals::DrawLabel( address_txt, glm::vec2( result.x, result.y + ( z / 3 ) ), visuals::ColorToArray( ImColor( 255, 255, 255, 255 ) ), false );
+                            }
                         }
                     }
                 }
@@ -435,7 +424,7 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
                 }
             }
 
-            if ( closest_dst < fov && target_pos.x != -1.f && GetAsyncKeyState(VK_RBUTTON ) )
+            if ( closest_dst < fov && target_pos.x != -1.f && GetAsyncKeyState( VK_RBUTTON ) )
             {
                 POINT target = { (LONG)target_pos.x, (LONG)target_pos.y };
                 ClientToScreen( bloodstrike::renderer::hWindow, &target );
@@ -449,10 +438,16 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
                 dx *= sens;
                 dy *= sens;
 
-                // dx = (signed char)std::clamp( (signed int)dx, clamp_min, clamp_max );
-                // dy = (signed char)std::clamp( (signed int)dy, clamp_min, clamp_max );
 
                 SetCursorPos( (int)target_pos.x, (int)target_pos.y );
+
+                uint64_t wlptrw = GetWindowLongPtrW( bloodstrike::renderer::hWindow, -21 );
+
+                // Messiah::Win32ViewportClientWindow : Messiah::IViewportClientWindow : Messiah::InputDispatcherWin32 : Messiah::InputTranslatorWin32]
+                // whcar_t* WindowTitle +0x288
+                // BYTE MouseFlag +0x22C
+
+                printf( "[debug]  wlptrw=%llx\n", wlptrw );
 
                 should_change_mouse = true;
             }
@@ -464,7 +459,7 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
         }
         ImGui::GetForegroundDrawList( )->AddCircle( ds, fov, ImColor( 255, 255, 255, 255 ), 250.f );
     }
-    else // no ICamera object
+    else
     {
         ImGui::GetForegroundDrawList( )->AddText( ImVec2( 100, 100 ), ImColor( 255, 0, 0, 255 ), "looking for camera..." );
         for ( auto addr : g_IEntity )
@@ -491,6 +486,12 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
                 {
                     bloodstrike::renderer::camera = addr;
                     printf( "[camera] set camera to %llX\n", addr );
+
+                    HWND consoleWindow = GetConsoleWindow( );
+                    ShowWindow( consoleWindow, SW_HIDE );
+                    fclose( stderr );
+                    if ( f ) fclose( f );
+                    FreeConsole( );
                     break;
                 }
                 else
@@ -500,17 +501,50 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
             }
         }
     }
-    
 
-    ImGui::Begin( "undetekted p2c (vanguard bypass) (2018 undetected new) (imgui bypass injector version)" );
-    ImGui::Text( "Total objects: %d", g_IEntity.size( ) );
-    ImGui::SliderInt( "BoneOffset", &bone_offset, 150, 500 );
-    ImGui::SliderInt( "Clamp Min", &clamp_min, -255, -1 );
-    ImGui::SliderInt( "Clamp Max", &clamp_max, 1, 255 );
-    ImGui::SliderFloat( "dx/dy sens", &sens, 0.001, 1.000, "%.5f" );
-    ImGui::SliderFloat( "fov", &fov, 35.f, 500.f );
-    ImGui::Checkbox( "Sticky Aim", &bStickyAim );
-    ImGui::End( );
+    if ( GetAsyncKeyState( VK_INSERT ) & 1 || GetAsyncKeyState(VK_BACK) & 1  )
+    {
+		menuOpen = !menuOpen;
+    }
+
+    if ( menuOpen )
+    {
+        ImGui::Begin( "the hermes bag came pink" );
+        ImGui::Text( "Total objects: %d", g_IEntity.size( ) );
+        ImGui::Text( "bloodstrike internal by WorldToScreen" );
+        ImGui::SliderFloat( "fov", &fov, 35.f, 500.f );
+		ImGui::Checkbox( "Randomize Aimbot", &randomizeAim );
+		ImGui::SliderFloat( "Head Chance", &headChance, 0.0f, 1.0f, "%.2f" );
+        if ( !randomizeAim )
+        {
+            ImGui::Checkbox( "Target chest", &aimBody );
+        }
+        ImGui::SliderInt( "Clamp Min", &clamp_min, -255, -1 );
+        ImGui::SliderInt( "Clamp Max", &clamp_max, 1, 255 );
+        ImGui::SliderFloat( "dx/dy sens", &sens, 0.001, 1.000, "%.5f" );
+        ImGui::SliderFloat( "animation speed", &anim_speed, 0.01f, 0.2f, "%.02f" );
+        if ( ImGui::Button( "Legit Config" ) )
+        {
+            randomizeAim = true;
+            aimBody = false;
+            headChance = 0.1855f;
+            sens = 0.15;
+            clamp_min = -100;
+            clamp_max = 100;
+            fov = 175.f;
+        }
+        ImGui::SameLine( ); if ( ImGui::Button( "Rage Config" ) )
+        {
+			randomizeAim = false;
+			aimBody = false;
+			headChance = 0.0f;
+			sens = 0.95f;
+			clamp_min = -255;
+			clamp_max = 255;
+			fov = 500.f;
+        }
+        ImGui::End( );
+    }
 
     ImGui::Render( );
     const float clear_color_with_alpha[4] = { 0.f, 0.f, 0.f, 255.f };
@@ -520,75 +554,14 @@ HRESULT hkPresent( IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags )
     return oPresent( pSwapChain, SyncInterval, Flags );
 }
 
-bool findPresent( )
-{
-    HWND hwnd = CreateWindowA( "STATIC", "dummy", WS_OVERLAPPEDWINDOW, 0, 0, 1, 1, 0, 0, 0, 0 );
-
-    DXGI_SWAP_CHAIN_DESC scDesc = {};
-    scDesc.BufferCount = 1;
-    scDesc.BufferDesc.Width = 1;
-    scDesc.BufferDesc.Height = 1;
-    scDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    scDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    scDesc.OutputWindow = hwnd;
-    scDesc.SampleDesc.Count = 1;
-    scDesc.Windowed = TRUE;
-    scDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-
-    ID3D11Device *pDevice = nullptr;
-    ID3D11DeviceContext *pContext = nullptr;
-    IDXGISwapChain *pSwap = nullptr;
-
-    HRESULT hr = D3D11CreateDeviceAndSwapChain(
-        nullptr,
-        D3D_DRIVER_TYPE_HARDWARE,
-        nullptr,
-        0,
-        nullptr,
-        0,
-        D3D11_SDK_VERSION,
-        &scDesc,
-        &pSwap,
-        &pDevice,
-        nullptr,
-        &pContext
-    );
-
-    if ( !SUCCEEDED( hr ) ) return false;
-    if ( !pSwap ) return false;
-
-    void **vtable = *(void ***)pSwap;
-
-    aPresent = (uint64_t)vtable[8];
-    aResizeBuffers = (uint64_t)vtable[13];
-
-    // cleanup
-    pSwap->Release( );
-    pContext->Release( );
-    pDevice->Release( );
-    DestroyWindow( hwnd );
-
-    return true;
-}
-
-void cleanup( HMODULE hModule )
-{
-    if ( f ) fclose( f );
-    printf( "[-] unhooking\n" );
-    MH_DisableHook( reinterpret_cast<void *>( aIObjectInitalizer ) );
-    MH_DisableHook( reinterpret_cast<void *>( aIObjectDeconstructor ) );
-    MH_DisableHook( reinterpret_cast<void *>( aPresent ) );
-    MH_Uninitialize( );
-    printf( "[-] finished\n" );
-    FreeConsole( );
-    FreeLibraryAndExitThread( hModule, 0 );
-}
 
 void Thread( HMODULE hModule )
 {
     if ( !findPresent( ) )
     {
-        printf( "[-] failed to hook d3d11..." );
+        printf( "[-] failed to initalize d3d11..." );
+		cleanup( hModule );
+        return;
     }
 
     printf( "[+] present %llX\n", aPresent );
@@ -627,9 +600,9 @@ void Thread( HMODULE hModule )
     status = MH_EnableHook( (LPVOID)aGetRawInputData );
     printf( "[ntdll] created GetRawInputData hook %d\n", status );
 
-    while ( !GetAsyncKeyState(VK_F6) )
+    while ( !GetAsyncKeyState( VK_F6 ) )
     {
-        
+		std::this_thread::sleep_for( std::chrono::milliseconds( 40 ) );
     }
 
     cleanup( hModule );
@@ -637,17 +610,18 @@ void Thread( HMODULE hModule )
 
 
 BOOL APIENTRY DllMain( HMODULE hModule,
-                       DWORD  ul_reason_for_call,
-                       LPVOID lpReserved
-                     )
+    DWORD  ul_reason_for_call,
+    LPVOID lpReserved
+)
 {
-    switch (ul_reason_for_call)
+    switch ( ul_reason_for_call )
     {
     case DLL_PROCESS_ATTACH:
         AllocConsole( );
         freopen_s( &f, "CONOUT$", "w", stdout );
         freopen_s( &f, "CONIN$", "r", stdin );
         base = (uint64_t)GetModuleHandleA( NULL );
+
         printf( "[+] EngineBase %llX\n", base );
 
         printf( "[+] hooks\n" );
@@ -659,6 +633,7 @@ BOOL APIENTRY DllMain( HMODULE hModule,
             aIObjectInitalizer = bloodstrike::funcs::Messiah__IObject__Initalizer + base;
             aIObjectDeconstructor = bloodstrike::funcs::Messiah__IObject__Deconstructor + base;
             aProject = bloodstrike::funcs::Messiah_WorldToScreen + base;
+            aGetBoneTransform = bloodstrike::funcs::Messiah__GetBoneTransform + base;
 
             MH_STATUS status = MH_CreateHook(
                 reinterpret_cast<void *>( aIObjectInitalizer ),
@@ -668,13 +643,20 @@ BOOL APIENTRY DllMain( HMODULE hModule,
             // printf( "Messiah__IEntity__Initalizer CreateHook %d\n", status );
             status = MH_EnableHook( reinterpret_cast<void *>( aIObjectInitalizer ) );
             // printf( "Messiah__IEntity__Initalizer EnableHook %d\n", status );
-            
+
             status = MH_CreateHook(
                 reinterpret_cast<void *>( aIObjectDeconstructor ),
                 &hkIObjectDeconstructor,
                 reinterpret_cast<void **>( &oIObjectDeconstructor )
             );
             status = MH_EnableHook( reinterpret_cast<void *>( aIObjectDeconstructor ) );
+
+            status = MH_CreateHook(
+                reinterpret_cast<void *>( aGetBoneTransform ),
+                &hkGetBoneTransform,
+                reinterpret_cast<void **>( &oGetBoneTransform )
+            );
+            status = MH_EnableHook( reinterpret_cast<void *>( aGetBoneTransform ) );
         }
         else
         {
@@ -686,12 +668,9 @@ BOOL APIENTRY DllMain( HMODULE hModule,
         break;
 
     case DLL_THREAD_ATTACH:
-
     case DLL_THREAD_DETACH:
-
     case DLL_PROCESS_DETACH:
         break;
     }
     return TRUE;
 }
-
