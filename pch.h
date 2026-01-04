@@ -6,6 +6,7 @@
 #include "config.hpp"
 #include <stdio.h>
 #include "MinHook.h"
+#include "kingkong.h"
 
 typedef unsigned long long uint64_t;
 
@@ -34,6 +35,7 @@ struct XMFLOAT3X4 {
 #include <fstream>
 #include <string>
 #include <emmintrin.h>
+#include <intrin.h>
 #include <cmath>
 #include <cstdint>
 #include <winternl.h>

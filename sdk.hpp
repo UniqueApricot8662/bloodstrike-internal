@@ -1,5 +1,7 @@
 #pragma once
 #include "pch.h"
+static uint64_t targetAddr = 0x0;
+static uint64_t lastTarget = 0x0;
 
 namespace visuals
 {
@@ -24,23 +26,31 @@ namespace sdk
 	bool safe_read( uint64_t addr, T &val );
 	template <typename T>
 	bool safe_write( uint64_t addr, T val );
-    bool w2s( __int64 cam, const glm::vec3 &world, glm::vec2 &out );
+    bool w2s( __int64 cam, const glm::vec3 &world, glm::vec2 &out, bool returnAnyway = false );
     bool findPresent( );
 	void cleanup( HMODULE hModule );
 }
 
+struct AimbotDebugPoint
+{
+    glm::vec3 from, to;
+    int duration;
+};
+
 namespace bloodstrike
 {
+    inline std::vector< AimbotDebugPoint > aimbotPoints{};
     namespace renderer
     {
         constexpr uint64_t hwnd = 0x6DE9430; // updated 9.26
-
+        static ID3D11ShaderResourceView *srv = nullptr;
         static ID3D11Device *deviceInstance = nullptr;
         static ID3D11DeviceContext *contextInstance = nullptr;
         static ID3D11RenderTargetView *rtv = nullptr;
         static HWND hWindow;
         static bool hooked = false;
         static uint64_t camera = 0x0;
+        static uint64_t localActor = 0x0;
         static std::vector<uint64_t> all_cameras = {};
     }
 
@@ -50,7 +60,7 @@ namespace bloodstrike
         constexpr uint64_t Messiah__IObject__Deconstructor = 0x2CF890;     // updated 9.26
         constexpr uint64_t Messiah_WorldToScreen = 0x940F60;               // updated 9.26
         constexpr uint64_t Messiah__GetBoneTransform = 0x0D2BEC0;          // updated 9.26
-
+		constexpr uint64_t Messiah__IEntity__Constructor = 0x780C90;        // updated 9.26
 		constexpr uint64_t GetRawInputData = 0x3BE8FF8;					   // updated 9.26
     }
 
@@ -65,5 +75,11 @@ namespace bloodstrike
         const uint64_t Messiah__IArea = 0x3FBAA68;                  // updated 9.28
         const uint64_t Messiah__TachComponent = 0x4101FC8;          // updated 9.28
         const uint64_t Messiah__FontType = 0x3C189F0;               // updated 9.28
+    }
+
+    namespace offsets
+    {
+        constexpr uint64_t Messiah__ClientEngine = 0x65F7AD0;
+        const uint64_t Messiah__EntityList = 0x6E4D0D8;
     }
 }

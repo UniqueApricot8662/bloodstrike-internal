@@ -2,6 +2,36 @@
 
 namespace hooks
 {
+
+    HRESULT hkResizeBuffers( IDXGISwapChain *swap, UINT bufferCount, UINT width, UINT height, DXGI_FORMAT newFormat, UINT flags )
+    {
+        Beep( 1000, 100 );
+
+        // just mark that we need to recreate on the next frame
+        g_needsResize = true;
+        g_newWidth = width;
+        g_newHeight = height;
+
+        return oResizeBuffers( swap, bufferCount, width, height, newFormat, flags );
+    }
+
+    void *hkIEntityConstructor( __int64 Block, __int64 a2, int a3 )
+    {
+		/*
+        printf( "entity %llX\n", Block );
+        void *stack[256];
+        USHORT nFrames = RtlCaptureStackBackTrace( 0, 256, stack, NULL );
+
+        for ( USHORT i = 0; i < nFrames; ++i )
+        {
+            uint64_t addr = (uint64_t)stack[i] - base;
+			addr += 0x140000000;
+            printf( "\t%llX frame %d: %p\n", Block,  i, addr );
+        }
+        */
+		return oIEntityConstructor( Block, a2, a3 );
+    }
+
     void *hkIObjectInitalizer( __int64 IObject, __int64 a2, int a3 )
     {
         if ( IObject && std::find( g_IEntity.begin( ), g_IEntity.end( ), IObject ) == g_IEntity.end( ) )  // && sdk::can_read( (void *)IObject, sizeof( void * ) )
@@ -28,11 +58,6 @@ namespace hooks
         return oIObjectDeconstructor( Block );
     }
 
-    __int64 hkGetBoneTransform( __int64 a1, __int64 a2, __int64 a3 )
-    {
-        return oGetBoneTransform( a1, a2, a3 );
-    }
-
     UINT WINAPI hkGetRawInputData( HRAWINPUT hRaw, UINT uiCmd, LPVOID pData, PUINT pcbSize, UINT cbHeader ) {
         UINT ret = oGetRawInputData( hRaw, uiCmd, pData, pcbSize, cbHeader );
         if ( !should_change_mouse ) return ret;
@@ -47,6 +72,7 @@ namespace hooks
         return ret;
     }
 
+    /*
     HRESULT hkResizeBuffers( IDXGISwapChain *swap, UINT bufferCount, UINT width, UINT height, DXGI_FORMAT newFormat, UINT flags )
     {
         if ( bloodstrike::renderer::rtv ) {
@@ -66,4 +92,5 @@ namespace hooks
 
         return hr;
     }
+    */
 }

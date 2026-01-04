@@ -156,6 +156,7 @@
     <ClInclude Include="MinHook.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="sdk.hpp" />
+    <ClInclude Include="stb_image.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
@@ -174,6 +175,9 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="sdk.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="kingkong.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

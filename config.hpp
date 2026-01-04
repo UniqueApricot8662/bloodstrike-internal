@@ -1,6 +1,6 @@
 #pragma once
 
-inline bool menuOpen = true;
+inline bool menuOpen = false;
 inline bool aimBody = false;
 inline bool randomizeAim = true;
 inline float headChance = 0.1855f;
@@ -10,7 +10,11 @@ inline signed int clamp_max = 100;
 inline float fov = 175;
 inline bool colorBack = false;
 inline float anim_speed = 0.05f;
-
+inline bool aimbotDebug = false;
+inline bool debugStats = false;
+inline bool kingKongEsp = false;
+inline int frameDebugDelay = 10;
+inline int frameDebugDuration = 1000;
 
 inline bool should_change_mouse;
 inline char dx;

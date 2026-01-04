@@ -52,7 +52,8 @@ namespace sdk
 {
     void BoneConnection( glm::vec2 a, glm::vec2 b, ImColor color )
     {
-        ImGui::GetForegroundDrawList( )->AddLine( ImVec2( a.x, a.y ), ImVec2( b.x, b.y ), color, 1.5f );
+        printf( "%s, %s\n", glm::to_string( a ).c_str( ), glm::to_string( b ).c_str( ) );
+        ImGui::GetBackgroundDrawList( )->AddLine( ImVec2( a.x, a.y ), ImVec2( b.x, b.y ), color, 1.f );
     }
 
     bool MessiahMatrixAdd( XMFLOAT3X4 bonemat, XMFLOAT3X4 pos, glm::vec3 &out ) {
@@ -124,8 +125,10 @@ namespace sdk
         val = *(T *)addr;
         return true;
     }
-    bool w2s( __int64 cam, const glm::vec3 &world, glm::vec2 &out )
+
+    bool w2s( __int64 cam, const glm::vec3 &world, glm::vec2 &out, bool returnAnyway )
     {
+        if ( !cam ) return false;
         float relX = world.x - *(float *)( cam + 124 );
         float relY = world.y - *(float *)( cam + 128 );
         float relZ = world.z - *(float *)( cam + 132 );
@@ -142,7 +145,7 @@ namespace sdk
             + relY * *(float *)( cam + 792 )
             + relZ * *(float *)( cam + 804 );
 
-        if ( pzOrig >= -0.01f ) // behind camera, original w2s doesn't have this for some reason
+        if ( pzOrig >= -0.01f && !returnAnyway )
             return false;
 
         float pz = -pzOrig;
@@ -215,8 +218,6 @@ namespace sdk
     {
         if ( f ) fclose( f );
         printf( "[-] unhooking\n" );
-        MH_DisableHook( reinterpret_cast<void *>( aIObjectInitalizer ) );
-        MH_DisableHook( reinterpret_cast<void *>( aIObjectDeconstructor ) );
         MH_DisableHook( reinterpret_cast<void *>( aPresent ) );
         MH_DisableHook( reinterpret_cast<void *>( aResizeBuffers ) );
         MH_DisableHook( reinterpret_cast<void *>( aGetRawInputData ) );
